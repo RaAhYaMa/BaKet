@@ -1,10 +1,11 @@
+import base64
 from datetime import datetime
 import json
 from django.urls import reverse
-from django.core import serializers
 from django.http import HttpResponseRedirect, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.utils.html import strip_tags
+from django.core.files.base import ContentFile
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from django.contrib.auth.decorators import login_required
@@ -358,12 +359,18 @@ def create_post_mobile(request):
     
     try:
         data = json.loads(request.body)
-        new_mood = Post.objects.create(
+        new_post = Post.objects.create(
             user=request.user,
             content=data['content']
         )
+        
+        if 'image' in data:
+            image_data = base64.b64decode(data['image'])
+            image_file = ContentFile(image_data, name=str(uuid.uuid4()))
+            
+            new_post.image = image_file
 
-        new_mood.save()
+        new_post.save()
     except:
         return JsonResponse({"status": "Failed to add post"}, status=400)
 

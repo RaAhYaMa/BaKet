@@ -19,6 +19,7 @@ def login(request):
             # Status login sukses.
             return JsonResponse({
                 "username": user.username,
+                "profile_picture": user.userprofile.profile_picture.url if user.userprofile.profile_picture else '/static/images/default_pp.png',
                 "status": True,
                 "message": "Login sukses!"
                 # Tambahkan data lainnya jika ingin mengirim data ke Flutter.

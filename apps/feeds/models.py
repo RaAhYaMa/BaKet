@@ -7,6 +7,7 @@ class Post(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     content = models.TextField()
+    image = models.ImageField(upload_to='feeds/', null=True, blank=True)
     like_count = models.IntegerField(default=0)
     reply_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
