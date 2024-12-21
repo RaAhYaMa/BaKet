@@ -24,13 +24,13 @@ def dummy_main(request):
     return render(request, 'dummy_main.html')
 
 def calculate_article_rank(article):
-    max_like_score = max_like_score()
-    max_comment_score = max_comment_score()
+    max_like_score = get_max_like_score()
+    max_comment_score = get_max_comment_score()
     
     # Define weights for each factor
     like_weight = 20
-    comment_weight = 15
-    date_weight = 10
+    comment_weight = 16
+    date_weight = 4
 
     # Calculate the score for each factor
     like_score = article.like_count
@@ -44,17 +44,13 @@ def calculate_article_rank(article):
     # Calculate the final rank
     rank = (like_weight * normalized_like_score +
             comment_weight * normalized_comment_score +
-            date_weight * normalized_date_score +
-            random.gauss((max_like_score + max_comment_score), (max_like_score + max_comment_score) / 100 + 1))
+            date_weight * normalized_date_score)
 
     return rank
 
 def show_main(request):
-    ranked_articles = ranked_articles()
-    max_like_score = max_like_score()
-    max_comment_score = max_comment_score()
-    
     articles = Article.objects.all()
+    
     if articles.count() == 0:
         return render(request, 'article_main.html', {'page_obj': None})
     search = request.GET.get("search")
@@ -68,15 +64,8 @@ def show_main(request):
             articles = articles.order_by("created_at")
         elif sort == "most_recent":
             articles = articles.order_by("-created_at")
-        elif not search:
-            articles = ranked_articles
     if not search and not sort:
-        if len(ranked_articles) != articles.count():
-            max_like_score = all_articles.aggregate(max_like=models.Max('like_count'))['max_like']
-            max_comment_score = all_articles.aggregate(max_comment=models.Max('comment_count'))['max_comment']
-            ranked_articles = sorted(articles, key=calculate_article_rank, reverse=True)
-
-        articles = ranked_articles
+        articles = sorted(articles, key=calculate_article_rank, reverse=True)
 
     paginator = Paginator(articles, 10)  # Show 10 articles per page
     page_number = request.GET.get('page')
@@ -85,18 +74,16 @@ def show_main(request):
     return render(request, 'article_main.html', {'page_obj': page_obj})
 
 def show_article(request, id):
-    ranked_articles = ranked_articles()
+    articles = ranked_articles()
     
     article = Article.objects.get(pk=id)
     other = []
-    for a in ranked_articles:
+    for a in articles:
         if a != article:
             other.append(a)
         if len(other) >= 3:
             break
 
-    # comment = Comment.objects.filter(article=article)
-    # like_comment = Like.objects.filter(comment=comment)
     user_data = {
         'id': request.user.id,
         'is_anonymous': request.user.is_anonymous
@@ -104,8 +91,6 @@ def show_article(request, id):
     context = {
         "article": article,
         "other": other,
-        # "comment": comment,
-        # "like_comment": like_comment,
         "anonymous": request.user.is_anonymous,
         "user_data": json.dumps(user_data)
     }
@@ -126,57 +111,82 @@ def add_comment(request, article_id):
         )
 
         new_comment.save()
+        article.comment_count += 1
+        article.save()
         return JsonResponse({
             'id': new_comment.id,
             'text': new_comment.content,
             'author': new_comment.user.username,
-            'created_at': new_comment.created_at.isoformat()
+            'created_at': new_comment.created_at.isoformat(),
+            "status": "success",
         }, status=201)
     return JsonResponse({}, status=401)
 
 def update_comment(request, comment_id):
-    comment = Comment.objects.get(pk=comment_id)
-    comment.content = strip_tags(request.PATCH.get("content"))
-    comment.has_edited = True
-    comment.save()
-    return HttpResponse(b"UPDATED", status=201)
+    if request.method == 'POST':
+        comment = Comment.objects.get(pk=comment_id)
+        data = json.loads(request.body)
+        comment.content = strip_tags(data.get("content"))
+        comment.has_edited = True
+        comment.save()
+        return HttpResponse(b"UPDATED", status=201)
+    return HttpResponse(b"FORBIDDEN", status=403)
 
 def delete_comment(request, comment_id):
     if request.method == "DELETE":
         comment = Comment.objects.get(pk=comment_id)
+        article = comment.article
         comment.delete()
+        article.comment_count -= 1
+        article.save()
         return HttpResponse(b"DELETED", status=201)
     return HttpResponse(b"FORBIDDEN", status=403)
 
 def like_article(request, article_id):
     if request.user.is_authenticated:
         article = Article.objects.get(pk=article_id)
-        if not is_like_article(request, article):
+        if not is_like_article(request, article_id):
             Like.objects.create(user=request.user, article=article)
-        return HttpResponse(b"LIKED", status=201)
+            article.like_count += 1
+            article.save()
+        else:
+            Like.objects.filter(user=request.user, article=article).delete()
+            article.like_count -= 1
+            article.save()
+        return JsonResponse({}, status=201)
     return HttpResponse(b"not authenticated", status=401)
 
 def unlike_article(request, article_id):
     if request.user.is_authenticated:
         article = Article.objects.get(pk=article_id)
-        if is_like_article(request, article):
+        if is_like_article(request, article_id):
             Like.objects.filter(user=request.user, article=article).delete()
+            article.like_count -= 1
+            article.save()
         return HttpResponse(b"UNLIKED", status=201)
     return HttpResponse(b"not authenticated", status=401)
 
 def like_comment(request, comment_id):
     if request.user.is_authenticated:
         comment = Comment.objects.get(pk=comment_id)
-        if not is_like_comment(request, comment):
+        if not is_like_comment(request, comment_id):
             Like.objects.create(user=request.user, comment=comment)
-        return HttpResponse(b"LIKED", status=201)
+            comment.like_count += 1
+            comment.save()
+        else:
+            Like.objects.filter(user=request.user, comment=comment).delete()
+            comment.like_count -= 1
+            comment.save()
+        return JsonResponse({}, status=201)
     return HttpResponse(b"not authenticated", status=401)
 
 def unlike_comment(request, comment_id):
     if request.user.is_authenticated:
         comment = Comment.objects.get(pk=comment_id)
-        if is_like_comment(request, comment):
+        if is_like_comment(request, comment_id):
             Like.objects.filter(user=request.user, comment=comment).delete()
+            comment.like_count -= 1
+            comment.save()
         return HttpResponse(b"UNLIKED", status=201)
     return HttpResponse(b"not authenticated", status=401)
 
@@ -188,16 +198,19 @@ def current_user(request):
     return HttpResponse(json.dumps(user_data), content_type="application/json")
 
 def is_like_article(request, article_id):
-    return Like.objects.filter(user=request.user, article=Article.objects.get(pk=article_id)).exist()
+    return Like.objects.filter(user=request.user, article=Article.objects.get(pk=article_id)).exists()
 
 def is_like_article_view(request, article_id):
     return JsonResponse({'is_like': is_like_article(request, article_id)})
 
 def is_like_comment(request, comment_id):
-    return Like.objects.filter(user=request.user, comment=Comment.objects.get(pk=comment_id)).exist()
+    return Like.objects.filter(user=request.user, comment=Comment.objects.get(pk=comment_id)).exists()
 
 def is_like_comment_view(request, comment_id):
     return JsonResponse({'is_like': is_like_comment(request, comment_id)})
+
+def is_comment_article(request, article_id):
+    return Comment.objects.filter(user=request.user, article=Article.objects.get(pk=article_id)).exists()
 
 def json_article(request):
     data = Article.objects.all()
@@ -217,9 +230,22 @@ def json_by_id_comment(request, id):
 
 def json_comment_by_article(request, article_id):
     comments = Comment.objects.filter(article=Article.objects.get(pk=article_id))
-    data = comments
+    data = []
 
-    return HttpResponse(serializers.serialize("json", data), content_type="application/json")
+    for comment in comments:
+        data.append({
+            "id": comment.id,
+            "author": comment.user.first_name + " " + comment.user.last_name,
+            "content": comment.content,
+            "time": comment.updated_at,
+            "has_edited": comment.has_edited,
+            "like_count": comment.like_count,
+            "is_like": is_like_comment(request, comment.id),
+            "can_edit": comment.user == request.user,
+        })
+
+    return JsonResponse(data, safe=False)
+    # return HttpResponse(serializers.serialize("json", comments), content_type="application/json")
 
 def json_like(request):
     data = Like.objects.all()
@@ -230,12 +256,78 @@ def json_by_id_like(request, id):
     return HttpResponse(serializers.serialize("json", data), content_type="application/json")
 
 
-# Helper Functions (ijin ubah ya yasin)
-def max_like_score():
+# Helper Functions (ijin ubah ya yasin) ## Aman - yasin
+def get_max_like_score():
     return Article.objects.all().aggregate(max_like=models.Max('like_count'))['max_like']
     
-def max_comment_score():
+def get_max_comment_score():
     return Article.objects.all().aggregate(max_comment=models.Max('comment_count'))['max_comment']
     
 def ranked_articles():
     return sorted(Article.objects.all(), key=calculate_article_rank, reverse=True)
+
+# For Flutter
+
+def json_article_flutter(request):
+    articles = Article.objects.all()
+    
+    if articles.count() == 0:
+        return render(request, 'article_main.html', {'page_obj': None})
+    search = request.GET.get("search")
+    sort = request.GET.get("sort")
+    if search:
+        articles = articles.filter(title__icontains=search)
+    if sort:
+        if sort == "most_like":
+            articles = articles.order_by("-like_count")
+        elif sort == "oldest":
+            articles = articles.order_by("created_at")
+        elif sort == "most_recent":
+            articles = articles.order_by("-created_at")
+    if not search and not sort:
+        articles = sorted(articles, key=calculate_article_rank, reverse=True)
+
+    data = []
+    for a in articles:
+        data.append({
+            "id": a.id,
+            "title": a.title,
+            "posted_by": a.posted_by,
+            "like_count": a.like_count,
+            "comment_count": a.comment_count,
+            "is_like": is_like_article(request, a.id),
+            "is_comment": is_comment_article(request, a.id),
+        })
+    return JsonResponse(data, safe=False)
+
+def json_article_page_flutter(request, id):
+    articles = ranked_articles()
+    
+    article = Article.objects.get(pk=id)
+    other = []
+    for a in articles:
+        if a != article:
+            other.append({
+                "id": a.id,
+                "title": a.title,
+                "posted_by": a.posted_by,
+                "like_count": a.like_count,
+                "comment_count": a.comment_count,
+                "is_like": is_like_article(request, a.id),
+                "is_comment": is_comment_article(request, a.id),
+            })
+        if len(other) >= 3:
+            break
+
+    article = {
+        "title": article.title,
+        "posted_by": article.posted_by,
+        "content": article.content,
+        "created_at": article.created_at,
+        "source": article.source,
+        "like_count": article.like_count,
+        "comment_count": article.comment_count,
+        "is_like": is_like_article(request, article.id),
+        "is_comment": is_comment_article(request, article.id),
+    }
+    return JsonResponse({"article": article, "other": other}, safe=False)

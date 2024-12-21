@@ -23,7 +23,7 @@ class PostSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Post
-        fields = ['id', 'user', 'content', 'like_count', 'reply_count', 'created_at', 'updated_at', 'is_liked']
+        fields = ['id', 'user', 'content', 'image', 'like_count', 'reply_count', 'created_at', 'updated_at', 'is_liked']
 
 class ReplySerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)

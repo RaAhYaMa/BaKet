@@ -1,19 +1,28 @@
+import base64
 from datetime import datetime
+import json
 from django.urls import reverse
-from django.core import serializers
-from django.http import HttpResponseRedirect, HttpResponse
+from django.http import HttpResponseRedirect, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.utils.html import strip_tags
+from django.core.files.base import ContentFile
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from django.contrib.auth.decorators import login_required
 
 from rest_framework.response import Response
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, authentication_classes
+from rest_framework.authentication import SessionAuthentication
 
 from apps.feeds.models import *
+from apps.feeds.pagination import PostPagination, ReplyPagination
 from apps.feeds.serializer import *
 from pytz import timezone
+
+# csrf_exempt for mobile integration
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+    def enforce_csrf(self, request):
+        return
 
 
 # Get all the posts
@@ -115,12 +124,22 @@ def delete_post(request, id):
 # Show all Posts in JSON format
 @api_view(['GET'])
 def post_json(request):
-    data = Post.objects.annotate(
-        is_liked=models.Exists(Like.objects.filter(
-            user=request.user, post=models.OuterRef('pk')))
-    ) if request.user.is_authenticated else Post.objects.annotate(
-        is_liked=models.Value(False, output_field=models.BooleanField())
-    )
+    query = request.GET.get('q', '')
+    
+    if request.user.is_authenticated:
+        data = Post.objects.filter(
+            content__icontains=query
+        ).annotate(
+            is_liked=models.Exists(Like.objects.filter(
+                user=request.user, post=models.OuterRef('pk')))
+        )
+    else:
+        data = Post.objects.filter(
+            content__icontains=query
+        ).annotate(
+            is_liked=models.Value(False, output_field=models.BooleanField())
+        )
+    
     serializer = PostSerializer(data, many=True)
     return Response(serializer.data)
 
@@ -128,12 +147,22 @@ def post_json(request):
 # Show all Posts by user in JSON format
 @api_view(['GET'])
 def post_json_by_user(request, user):
-    data = Post.objects.filter(user=user).annotate(
-        is_liked=models.Exists(Like.objects.filter(
-            user=request.user, post=models.OuterRef('pk')))
-    ) if request.user.is_authenticated else Post.objects.filter(user=user).annotate(
-        is_liked=models.Value(False, output_field=models.BooleanField())
-    )
+    query = request.GET.get('q', '')
+    
+    if request.user.is_authenticated:
+        data = Post.objects.filter(
+            content__icontains=query, user=user
+        ).annotate(
+            is_liked=models.Exists(Like.objects.filter(
+                user=request.user, post=models.OuterRef('pk')))
+        )
+    else:
+        data = Post.objects.filter(
+            content__icontains=query, user=user
+        ).annotate(
+            is_liked=models.Value(False, output_field=models.BooleanField())
+        )
+    
     serializer = PostSerializer(data, many=True)
     return Response(serializer.data)
 
@@ -313,3 +342,334 @@ def report_json(request):
     data = Report.objects.all()
     serializer = ReportSerializer(data, many=True)
     return Response(serializer.data)
+
+
+################
+# MOBILE INTEG #
+################
+
+
+# Create a new post for mobile app
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+def create_post_mobile(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"status": "User not authenticated"}, status=401)
+    
+    try:
+        data = json.loads(request.body)
+        new_post = Post.objects.create(
+            user=request.user,
+            content=data['content']
+        )
+        
+        if 'image' in data:
+            image_data = base64.b64decode(data['image'])
+            image_file = ContentFile(image_data, name=str(uuid.uuid4()))
+            
+            new_post.image = image_file
+
+        new_post.save()
+    except:
+        return JsonResponse({"status": "Failed to add post"}, status=400)
+
+    return JsonResponse({"status": "Successfully added post"}, status=200)
+    
+
+# Update a post for mobile app
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+def edit_post_mobile(request, id):
+    if not request.user.is_authenticated:
+        return JsonResponse({"status": "User not authenticated"}, status=401)
+    
+    try:
+        post = Post.objects.get(pk=id)
+        if request.user != post.user:
+            return JsonResponse({"status": "Wrong user"}, status=401)
+        
+        data = json.loads(request.body)
+        post.content = data['content']
+        post.save()
+    except:
+        return JsonResponse({"status": "Failed to update post"}, status=400)
+
+    return JsonResponse({"status": "Successfully updated post"}, status=200)
+
+
+# Delete a post for mobile app
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+def delete_post_mobile(request, id):
+    if not request.user.is_authenticated:
+        return JsonResponse({"status": "User not authenticated"}, status=401)
+    
+    post = Post.objects.get(pk=id)
+    
+    if not post:
+        return JsonResponse({"status": "Post not found"}, status=404)
+    
+    if request.user != post.user:
+        return JsonResponse({"status": "Wrong user"}, status=401)
+
+    post.delete()
+
+    return JsonResponse({"status": "Successfully deleted post"}, status=200)
+
+
+# Like a post from mobile app
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+def like_post_mobile(request, id):
+    if not request.user.is_authenticated:
+        return JsonResponse({"status": "User not authenticated"}, status=401)
+    
+    post = Post.objects.get(pk=id)
+    
+    if not post:
+        return JsonResponse({"status": "Post not found"}, status=404)
+
+    if Like.objects.filter(user=request.user, post=post).exists():
+        return JsonResponse({"status": "Already liked"}, status=400)
+
+    new_like = Like(user=request.user, post=post)
+    new_like.save()
+
+    post.like_count = Like.objects.filter(post=post).count()
+    post.save()
+
+    return JsonResponse({"status": "Successfully liked"}, status=201)
+
+
+# Unlike a post from mobile app
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+def unlike_post_mobile(request, id):
+    if not request.user.is_authenticated:
+        return JsonResponse({"status": "User not authenticated"}, status=401)
+    
+    post = Post.objects.get(pk=id)
+    
+    if not post:
+        return JsonResponse({"status": "Post not found"}, status=404)
+
+    if not Like.objects.filter(user=request.user, post=post).exists():
+        return JsonResponse({"status": "Already unliked"}, status=400)
+
+    Like.objects.filter(user=request.user, post=post).delete()
+
+    post.like_count = Like.objects.filter(post=post).count()
+    post.save()
+
+    return JsonResponse({"status": "Successfully unliked"}, status=201)
+
+
+# Create reply from mobile app
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+def create_reply_mobile(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"status": "User not authenticated"}, status=401)
+    
+    try:
+        data = json.loads(request.body)
+        
+        post = Post.objects.get(pk=data['post_id'])
+        if not post:
+            return JsonResponse({"status": "Post not found"}, status=404)
+    
+        reply = Reply.objects.create(
+            user=request.user,
+            post=post,
+            content=data['content']
+        )
+
+        reply.save()
+    except:
+        return JsonResponse({"status": "Failed to add reply"}, status=400)
+
+    post.reply_count += 1
+    post.save()
+
+    return JsonResponse({"status": "Successfully added reply"}, status=200)
+
+
+# Delete a reply from mobile
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+def delete_reply_mobile(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"status": "User not authenticated"}, status=401)
+    
+    try:
+        data = json.loads(request.body)
+        reply = Reply.objects.get(pk=data['reply_id'])
+        
+        if not reply:
+            return JsonResponse({"status": "Reply not found"}, status=404)
+        
+        if request.user != reply.user:
+            return JsonResponse({"status": "Wrong user"}, status=401)
+        
+        reply.delete()
+    except:
+        return JsonResponse({"status": "Failed to delete reply"}, status=400)
+    
+    post = reply.post
+    post.reply_count -= 1
+    post.save()
+    
+    return JsonResponse({"status": "Successfully deleted reply"}, status=200)
+
+
+# Like a reply from mobile
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+def like_reply_mobile(request, id):
+    if not request.user.is_authenticated:
+        return JsonResponse({"status": "User not authenticated"}, status=401)
+    
+    reply = Reply.objects.get(pk=id)
+    
+    if not reply:
+        return JsonResponse({"status": "Reply not found"}, status=404)
+    
+    if Like.objects.filter(user=request.user, reply=reply).exists():
+        return JsonResponse({"status": "Already liked"}, status=400)
+
+    post = reply.post
+
+    new_like = Like(user=request.user, reply=reply, post=post)
+    new_like.save()
+
+    reply.like_count = Like.objects.filter(reply=reply).count()
+    reply.save()
+
+    return JsonResponse({"status": "Successfully liked"}, status=201)
+
+
+# Unlike a reply from mobile
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+def unlike_reply_mobile(request, id):
+    if not request.user.is_authenticated:
+        return JsonResponse({"status": "User not authenticated"}, status=401)
+    
+    reply = Reply.objects.get(pk=id)
+    
+    if not reply:
+        return JsonResponse({"status": "Reply not found"}, status=404)
+    
+    if not Like.objects.filter(user=request.user, reply=reply).exists():
+        return JsonResponse({"status": "Already unliked"}, status=400)
+
+    Like.objects.filter(user=request.user, reply=reply).delete()
+
+    reply.like_count = Like.objects.filter(reply=reply).count()
+    reply.save()
+
+    return JsonResponse({"status": "Successfully unliked"}, status=201)
+
+
+# Report a post from mobile
+@csrf_exempt
+@api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
+def report_mobile(request):
+    try:
+        data = json.loads(request.body)
+        
+        if not data['reporting'] or not data['report_type']:
+            return JsonResponse({"status": "Missing required fields"}, status=400)
+        
+        new_report = Report(reporting=data['reporting'], report_type=data['report_type'])
+        new_report.save()
+    except:
+        return JsonResponse({"status": "Failed to report"}, status=400)
+
+    return JsonResponse({"status": "Successfully reported"}, status=201)
+
+
+###############
+# PAGINATIONS #
+###############
+
+
+# Get all the posts with pagination (post_json for mobile)
+@csrf_exempt
+@api_view(['GET'])
+def api_post_json(request):
+    query = request.GET.get('q', '')
+    paginator = PostPagination()
+    
+    if request.user.is_authenticated:
+        data = Post.objects.filter(
+            content__icontains=query
+        ).annotate(
+            is_liked=models.Exists(Like.objects.filter(
+                user=request.user, post=models.OuterRef('pk')))
+        )
+    else:
+        data = Post.objects.filter(
+            content__icontains=query
+        ).annotate(
+            is_liked=models.Value(False, output_field=models.BooleanField())
+        )
+    
+    # Paginate
+    result_page = paginator.paginate_queryset(data, request)
+    serializer = PostSerializer(result_page, many=True)
+    
+    return paginator.get_paginated_response(serializer.data)
+
+
+# Get all Post by user paginated
+@csrf_exempt
+@api_view(['GET'])
+def api_post_json_by_user(request):
+    query = request.GET.get('q', '')
+    paginator = PostPagination()
+    
+    data = Post.objects.filter(
+        content__icontains=query, user=request.user
+    ).annotate(
+        is_liked=models.Exists(Like.objects.filter(
+            user=request.user, post=models.OuterRef('pk')))
+    ) if request.user.is_authenticated else Post.objects.filter(user=request.user).annotate(
+        is_liked=models.Value(False, output_field=models.BooleanField())
+    )
+    
+    # Paginate
+    result_page = paginator.paginate_queryset(data, request)
+    serializer = PostSerializer(result_page, many=True)
+    
+    return paginator.get_paginated_response(serializer.data)    
+
+
+# Get all reply with pagination
+@csrf_exempt
+@api_view(['GET'])
+def api_reply_json(request, post_id):
+    paginator = ReplyPagination()
+    
+    data = Reply.objects.filter(post=post_id).annotate(
+        is_liked=models.Exists(Like.objects.filter(
+            user=request.user, reply=models.OuterRef('pk')))
+    ) if request.user.is_authenticated else Reply.objects.filter(post=post_id).annotate(
+        is_liked=models.Value(False, output_field=models.BooleanField())
+    )
+    
+    # Paginate
+    result_page = paginator.paginate_queryset(data, request)
+    serializers = ReplySerializer(result_page, many=True)
+    
+    return paginator.get_paginated_response(serializers.data)
