@@ -37,20 +37,20 @@ urlpatterns = [
     ####  Mobile  ####
     
     # Posts
-    path('api/create/post/', create_post_mobile, name='create_post_mobile'),
+    path('api/create/post', create_post_mobile, name='create_post_mobile'),
     path('api/post-edit/<uuid:id>', edit_post_mobile, name='edit_post_mobile'),
     path('api/post-delete/<uuid:id>', delete_post_mobile, name='delete_post_mobile'),
     path('api/post-like/<uuid:id>', like_post_mobile, name='like_post_mobile'),
     path('api/post-unlike/<uuid:id>', unlike_post_mobile, name='unlike_post_mobile'),
     
     # Replies
-    path('api/create/reply/', create_reply_mobile, name='create_reply_mobile'),
+    path('api/create/reply', create_reply_mobile, name='create_reply_mobile'),
     path('api/reply-delete/<uuid:id>', delete_reply_mobile, name='delete_reply_mobile'),
     path('api/reply-like/<uuid:id>', like_reply_mobile, name='like_reply_mobile'),
     path('api/reply-unlike/<uuid:id>', unlike_reply_mobile, name='unlike_reply_mobile'),
     
     # Reports
-    path('api/report/', report_mobile, name='report_mobile'),
+    path('api/report', report_mobile, name='report_mobile'),
     
     # Pagination Data
     path('api/json/post', api_post_json, name='api_post_json'),
