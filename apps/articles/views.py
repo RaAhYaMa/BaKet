@@ -272,7 +272,7 @@ def json_article_flutter(request):
     articles = Article.objects.all()
     
     if articles.count() == 0:
-        return render(request, 'article_main.html', {'page_obj': None})
+        return JsonResponse([], safe=False)
     search = request.GET.get("search")
     sort = request.GET.get("sort")
     if search:
