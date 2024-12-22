@@ -305,7 +305,7 @@ def json_article_page_flutter(request, id):
     
     article = Article.objects.get(pk=id)
     other = []
-    for a in articles:
+    for a in random.choices(articles, k=min(4, len(articles))):
         if a != article:
             other.append({
                 "id": a.id,
