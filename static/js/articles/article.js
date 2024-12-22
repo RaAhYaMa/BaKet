@@ -194,7 +194,7 @@ async function refreshComments(article_id) {
             // Send a DELETE request to the server to delete the comment
                 try {
                     const response = await fetch(`/articles/delete_comment/${commentId}/`, {
-                        method: 'DELETE',
+                        method: 'POST',
                         headers: {
                             'X-CSRFToken': csrf_token,
                         },

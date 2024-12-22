@@ -129,18 +129,18 @@ def update_comment(request, comment_id):
         comment.content = strip_tags(data.get("content"))
         comment.has_edited = True
         comment.save()
-        return HttpResponse(b"UPDATED", status=201)
-    return HttpResponse(b"FORBIDDEN", status=403)
+        return JsonResponse({"status": "success"}, status=201)
+    return JsonResponse({}, status=201)
 
 def delete_comment(request, comment_id):
-    if request.method == "DELETE":
+    if request.method == "POST" or request.method == "GET":
         comment = Comment.objects.get(pk=comment_id)
         article = comment.article
         comment.delete()
         article.comment_count -= 1
         article.save()
-        return HttpResponse(b"DELETED", status=201)
-    return HttpResponse(b"FORBIDDEN", status=403)
+        return JsonResponse({"status": "success"}, status=201)
+    return JsonResponse({}, status=403)
 
 def like_article(request, article_id):
     if request.user.is_authenticated:
@@ -154,7 +154,7 @@ def like_article(request, article_id):
             article.like_count -= 1
             article.save()
         return JsonResponse({}, status=201)
-    return HttpResponse(b"not authenticated", status=401)
+    return JsonResponse({}, status=401)
 
 def unlike_article(request, article_id):
     if request.user.is_authenticated:
@@ -178,7 +178,7 @@ def like_comment(request, comment_id):
             comment.like_count -= 1
             comment.save()
         return JsonResponse({}, status=201)
-    return HttpResponse(b"not authenticated", status=401)
+    return JsonResponse({}, status=401)
 
 def unlike_comment(request, comment_id):
     if request.user.is_authenticated:
